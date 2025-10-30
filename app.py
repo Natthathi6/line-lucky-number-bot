@@ -2,24 +2,33 @@ import os
 import pandas as pd
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
-from linebot.v3.messaging import MessagingApi, ReplyMessageRequest, TextMessage
+from linebot.v3.messaging import (
+    MessagingApi,
+    ApiClient,
+    Configuration,
+    ReplyMessageRequest,
+    TextMessage
+)
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.exceptions import InvalidSignatureError
 
-# === Flask Setup ===
+# === Flask setup ===
 app = Flask(__name__)
 
-# === LINE Config ===
+# === LINE configuration ===
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
-    raise ValueError("❌ Missing LINE credentials. Please check environment variables.")
+    raise ValueError("❌ Missing LINE credentials. Please check Render Environment Variables.")
 
-line_bot_api = MessagingApi(LINE_CHANNEL_ACCESS_TOKEN)
+# ✅ Correct SDK v3 setup
+configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+api_client = ApiClient(configuration)
+line_bot_api = MessagingApi(api_client)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# === CSV Loader (ป้องกัน error header และ encoding) ===
+# === Load CSV safely ===
 def load_csv_safely(path):
     try:
         df = pd.read_csv(path, encoding="utf-8-sig", dtype=str).fillna("")
@@ -36,18 +45,12 @@ print("✅ CSV Files Loaded Successfully")
 print("Pairs Columns:", pairs_df.columns.tolist())
 print("Total Columns:", total_df.columns.tolist())
 
-# === Validate Columns ===
-if "pair" not in pairs_df.columns:
-    raise ValueError(f"❌ CSV Error: Missing 'pair' column. Found {pairs_df.columns.tolist()}")
-if "total" not in total_df.columns:
-    raise ValueError(f"❌ CSV Error: Missing 'total' column. Found {total_df.columns.tolist()}")
-
-# === Create Mappings ===
+# === Mapping ===
 pairs_map = {str(r["pair"]).zfill(2): r.to_dict() for _, r in pairs_df.iterrows()}
 totals_map = {str(r["total"]).zfill(2): r.to_dict() for _, r in total_df.iterrows()}
 
 
-# === Flask route for LINE webhook ===
+# === Webhook endpoint ===
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
@@ -61,30 +64,36 @@ def callback():
     return "OK"
 
 
-# === Handle Message ===
+# === Handle Message Event ===
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     user_text = event.message.text.strip()
 
+    # Validate input
     if not user_text.isdigit():
         reply_text = "กรุณาพิมพ์เฉพาะตัวเลข เช่น 0812345678"
     else:
-        number = user_text[-8:]  # ใช้แค่ 8 หลักท้าย
-        pairs = [number[i:i+2] for i in range(0, len(number), 2)]
+        number = user_text[-8:]  # ใช้ 8 หลักท้าย
+        pairs = [number[i:i + 2] for i in range(0, len(number), 2)]
 
+        # แสดงผลคู่ทั้งหมด
         results = []
         for p in pairs:
             info = pairs_map.get(p, {"meaning": "ไม่พบข้อมูล"})
             results.append(f"{p}: {info.get('meaning', '')}")
 
+        # คำนวณผลรวม
         total_sum = sum(int(p) for p in pairs) % 100
-        total_info = totals_map.get(str(total_sum).zfill(2), {"meaning": "ไม่พบความหมายรวม"})
+        total_info = totals_map.get(str(total_sum).zfill(2), {"meaning": "ไม่พบความหมายรวม", "detail_meaning": ""})
 
+        # สร้างข้อความตอบกลับ
         reply_text = (
             f"🔢 เบอร์: {user_text}\n"
-            f"🧮 ผลรวม = {total_sum} → {total_info.get('meaning', '')}"
+            f"🧮 ผลรวม = {total_sum} → {total_info.get('meaning', '')}\n\n"
+            f"{total_info.get('detail_meaning', '')}"
         )
 
+    # ส่งข้อความตอบกลับ
     line_bot_api.reply_message(
         ReplyMessageRequest(
             reply_token=event.reply_token,
@@ -93,6 +102,7 @@ def handle_message(event):
     )
 
 
+# === Run app ===
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
