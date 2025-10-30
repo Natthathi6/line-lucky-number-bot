@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
@@ -35,8 +36,20 @@ total_df = load_csv("data/total_meanings.csv")
 pairs_map = {str(r["pair"]).zfill(2): r.to_dict() for _, r in pairs_df.iterrows()}
 totals_map = {str(r["total"]).zfill(2): r.to_dict() for _, r in total_df.iterrows()}
 
-# === Memory for last analysis ===
-last_pairs = {}
+# === Persistent memory ===
+SESSION_FILE = "session.json"
+
+def load_session():
+    if os.path.exists(SESSION_FILE):
+        with open(SESSION_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_session(data):
+    with open(SESSION_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+sessions = load_session()
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -48,21 +61,21 @@ def callback():
         abort(400)
     return "OK"
 
-
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
 
-    # 🔹 ถ้าผู้ใช้ถาม “มีคู่เสียมั้ย”
+    # ถามว่ามีคู่เสียมั้ย
     if text in ["มีคู่เสียมั้ย", "คู่เสียมีมั้ย", "มีคู่เสียไหม"]:
-        bad_pairs = last_pairs.get(user_id)
-        if not bad_pairs:
+        user_data = sessions.get(user_id)
+        if not user_data or not user_data.get("bad_pairs"):
             reply = "ยังไม่มีข้อมูลเบอร์ล่าสุด กรุณาพิมพ์เบอร์ก่อน เช่น 0812345678"
-        elif len(bad_pairs) == 0:
+        elif len(user_data["bad_pairs"]) == 0:
             reply = "✅ ไม่มีคู่เลขเสียในเบอร์นี้เลยครับ!"
         else:
-            reply = "💥 คู่เลขเสียที่พบ:\n" + "\n".join(bad_pairs)
+            bad_pairs = "\n".join(user_data["bad_pairs"])
+            reply = f"💥 คู่เลขเสียที่พบ:\n{bad_pairs}"
 
         line_bot_api.reply_message(
             ReplyMessageRequest(
@@ -72,7 +85,7 @@ def handle_message(event):
         )
         return
 
-    # 🔹 ถ้าผู้ใช้พิมพ์เบอร์โทร
+    # วิเคราะห์เบอร์
     digits = [int(ch) for ch in text if ch.isdigit()]
     if not digits:
         reply = "กรุณาพิมพ์เฉพาะตัวเลข เช่น 0812345678"
@@ -88,8 +101,12 @@ def handle_message(event):
             if info and info.get("is_good") == "no":
                 bad_list.append(f"{pair} ({info['meaning']})")
 
-        # 🔹 บันทึกคู่เสียล่าสุดไว้ให้ถามภายหลัง
-        last_pairs[user_id] = bad_list
+        # บันทึกข้อมูลเบอร์ล่าสุดของ user
+        sessions[user_id] = {
+            "last_number": ''.join(str(d) for d in digits),
+            "bad_pairs": bad_list
+        }
+        save_session(sessions)
 
         reply = (
             f"เบอร์: {''.join(str(d) for d in digits)}\n"
@@ -103,7 +120,6 @@ def handle_message(event):
             messages=[TextMessage(text=reply)]
         )
     )
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
