@@ -8,7 +8,7 @@ import os
 # === Flask app ===
 app = Flask(__name__)
 
-# === โหลดค่าจาก Environment (ของ Render) ===
+# === โหลดค่าจาก Environment (Render) ===
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 
@@ -22,37 +22,40 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 pairs_df = pd.read_csv("data/pairs_color_map.csv", dtype=str).fillna("")
 total_df = pd.read_csv("data/total_meanings.csv", dtype=str).fillna("")
 
-# สร้าง dictionary คู่เลข
+# แปลงเป็น dictionary
 pairs_map = {str(r["pair"]).zfill(2): r.to_dict() for _, r in pairs_df.iterrows()}
-
-# สร้าง dictionary ผลรวม
 total_map = {str(r["total"]).zfill(2): r.to_dict() for _, r in total_df.iterrows()}
 
 # === ฟังก์ชันวิเคราะห์เบอร์ ===
 def analyze_number(number):
+    # เอาเฉพาะตัวเลข
     number = ''.join(filter(str.isdigit, number))
     if len(number) < 6:
-        return {"error": "กรุณากรอกเบอร์ให้ครบ เช่น 0812345678"}
+        return {"error": "⚠️ กรุณากรอกเบอร์ให้ครบ เช่น 0812345678"}
 
     # คำนวณผลรวม
     digits = [int(ch) for ch in number]
     total = sum(digits)
     total_str = str(total)
-    meaning_info = total_map.get(total_str, None)
 
+    # ดึงความหมายผลรวม
+    meaning_info = total_map.get(total_str, None)
     if meaning_info:
         meaning = meaning_info.get("meaning", "")
         detail = meaning_info.get("detail_meaning", "")
     else:
-        meaning = "ไม่พบความหมายผลรวมนี้"
+        meaning = "ไม่พบความหมายผลรวมนี้ในฐานข้อมูล"
         detail = ""
 
     # ตรวจหาคู่เลขเสีย
-    check_part = number[-7:]  # ใช้เฉพาะส่วนหลัง 7 หลัก
+    check_part = number[-7:]  # ใช้เฉพาะ 7 หลักสุดท้าย
     pairs = [check_part[i:i+2] for i in range(len(check_part) - 1)]
     bad_pairs = [p for p in pairs if p in pairs_map and pairs_map[p].get("is_good") == "0"]
 
-    reply_text = f"🔢 เบอร์: {number}\n🧮 ผลรวม = {total} → {meaning}\n     {detail}"
+    # สร้างข้อความตอบกลับ
+    reply_text = f"🔢 เบอร์: {number}\n🧮 ผลรวม = {total} → {meaning}"
+    if detail:
+        reply_text += f"\n     {detail}"
 
     if bad_pairs:
         reply_text += f"\n⚠️ พบคู่เสีย: {', '.join(bad_pairs)}"
@@ -106,7 +109,7 @@ def handle_message(event):
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 
-# === รันเซิร์ฟเวอร์ (Render) ===
+# === รันเซิร์ฟเวอร์ (สำหรับ Render) ===
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
