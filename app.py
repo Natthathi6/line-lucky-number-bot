@@ -22,13 +22,14 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
     raise ValueError("❌ Missing LINE credentials. Please check Render Environment Variables.")
 
-# ✅ Correct SDK v3 setup
+# ✅ LINE SDK v3 setup
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 api_client = ApiClient(configuration)
 line_bot_api = MessagingApi(api_client)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# === Load CSV safely ===
+
+# === Safe CSV loader ===
 def load_csv_safely(path):
     try:
         df = pd.read_csv(path, encoding="utf-8-sig", dtype=str).fillna("")
@@ -37,7 +38,8 @@ def load_csv_safely(path):
     df.columns = df.columns.str.strip().str.lower()
     return df
 
-# === Load data files ===
+
+# === Load data ===
 pairs_df = load_csv_safely("data/pairs_color_map.csv")
 total_df = load_csv_safely("data/total_meanings.csv")
 
@@ -68,32 +70,27 @@ def callback():
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     user_text = event.message.text.strip()
+    digits = [int(ch) for ch in user_text if ch.isdigit()]
 
-    # Validate input
-    if not user_text.isdigit():
+    if not digits:
         reply_text = "กรุณาพิมพ์เฉพาะตัวเลข เช่น 0812345678"
     else:
-        number = user_text[-8:]  # ใช้ 8 หลักท้าย
-        pairs = [number[i:i + 2] for i in range(0, len(number), 2)]
+        # ✅ คำนวณผลรวมจากทุกหลัก
+        total_sum = sum(digits)
+        key = str(total_sum).zfill(2)
 
-        # แสดงผลคู่ทั้งหมด
-        results = []
-        for p in pairs:
-            info = pairs_map.get(p, {"meaning": "ไม่พบข้อมูล"})
-            results.append(f"{p}: {info.get('meaning', '')}")
+        total_info = totals_map.get(
+            key,
+            {"meaning": "ไม่พบความหมายรวม", "detail_meaning": ""}
+        )
 
-        # คำนวณผลรวม
-        total_sum = sum(int(p) for p in pairs) % 100
-        total_info = totals_map.get(str(total_sum).zfill(2), {"meaning": "ไม่พบความหมายรวม", "detail_meaning": ""})
-
-        # สร้างข้อความตอบกลับ
         reply_text = (
-            f"🔢 เบอร์: {user_text}\n"
+            f"🔢 เบอร์: {''.join(str(d) for d in digits)}\n"
             f"🧮 ผลรวม = {total_sum} → {total_info.get('meaning', '')}\n\n"
             f"{total_info.get('detail_meaning', '')}"
         )
 
-    # ส่งข้อความตอบกลับ
+    # ✅ ส่งข้อความตอบกลับ
     line_bot_api.reply_message(
         ReplyMessageRequest(
             reply_token=event.reply_token,
