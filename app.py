@@ -1,5 +1,4 @@
 import os
-import json
 import pandas as pd
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
@@ -36,21 +35,6 @@ total_df = load_csv("data/total_meanings.csv")
 pairs_map = {str(r["pair"]).zfill(2): r.to_dict() for _, r in pairs_df.iterrows()}
 totals_map = {str(r["total"]).zfill(2): r.to_dict() for _, r in total_df.iterrows()}
 
-# === Persistent memory ===
-SESSION_FILE = "session.json"
-
-def load_session():
-    if os.path.exists(SESSION_FILE):
-        with open(SESSION_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_session(data):
-    with open(SESSION_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-sessions = load_session()
-
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
@@ -63,57 +47,51 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
-    user_id = event.source.user_id
     text = event.message.text.strip()
 
-    # ถามว่ามีคู่เสียมั้ย
-    if text in ["มีคู่เสียมั้ย", "คู่เสียมีมั้ย", "มีคู่เสียไหม"]:
-        user_data = sessions.get(user_id)
-        if not user_data or not user_data.get("bad_pairs"):
-            reply = "ยังไม่มีข้อมูลเบอร์ล่าสุด กรุณาพิมพ์เบอร์ก่อน เช่น 0812345678"
-        elif len(user_data["bad_pairs"]) == 0:
-            reply = "✅ ไม่มีคู่เลขเสียในเบอร์นี้เลยครับ!"
+    # === ตรวจว่าเป็นข้อความแบบ "เบอร์ มีคู่เสียมั้ย" หรือไม่ ===
+    if any(x in text for x in ["มีคู่เสีย", "คู่เสียมี", "คู่เสียมั้ย", "มีคู่เสียไหม"]):
+        # แยกเฉพาะตัวเลขจากข้อความ
+        digits = [int(ch) for ch in text if ch.isdigit()]
+        if not digits:
+            reply = "กรุณาพิมพ์รูปแบบเช่น 0812345678 มีคู่เสียมั้ย"
         else:
-            bad_pairs = "\n".join(user_data["bad_pairs"])
-            reply = f"💥 คู่เลขเสียที่พบ:\n{bad_pairs}"
+            total_sum = sum(digits)
+            total_key = str(total_sum).zfill(2)
+            total_info = totals_map.get(total_key, {"meaning": "ไม่พบความหมายรวม", "detail_meaning": ""})
 
-        line_bot_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text=reply)]
+            bad_list = []
+            for i in range(len(digits) - 1):
+                pair = f"{digits[i]}{digits[i+1]}"
+                info = pairs_map.get(pair)
+                if info and info.get("is_good") == "no":
+                    bad_list.append(f"{pair} ({info['meaning']})")
+
+            bad_pairs = "\n".join(bad_list) if bad_list else "ไม่มีคู่เลขเสียเลยครับ ✅"
+
+            reply = (
+                f"เบอร์: {''.join(str(d) for d in digits)}\n"
+                f"🧮 ผลรวม = {total_sum} → {total_info.get('meaning','')}\n"
+                f"{total_info.get('detail_meaning','')}\n\n"
+                f"💥 คู่เลขเสียที่พบ:\n{bad_pairs}"
             )
-        )
-        return
 
-    # วิเคราะห์เบอร์
-    digits = [int(ch) for ch in text if ch.isdigit()]
-    if not digits:
-        reply = "กรุณาพิมพ์เฉพาะตัวเลข เช่น 0812345678"
     else:
-        total_sum = sum(digits)
-        total_key = str(total_sum).zfill(2)
-        total_info = totals_map.get(total_key, {"meaning": "ไม่พบความหมายรวม", "detail_meaning": ""})
+        # === กรณีผู้ใช้พิมพ์แค่เบอร์ ===
+        digits = [int(ch) for ch in text if ch.isdigit()]
+        if not digits:
+            reply = "กรุณาพิมพ์เฉพาะตัวเลข เช่น 0812345678"
+        else:
+            total_sum = sum(digits)
+            total_key = str(total_sum).zfill(2)
+            total_info = totals_map.get(total_key, {"meaning": "ไม่พบความหมายรวม", "detail_meaning": ""})
+            reply = (
+                f"เบอร์: {''.join(str(d) for d in digits)}\n"
+                f"🧮 ผลรวม = {total_sum} → {total_info.get('meaning','')}\n"
+                f"{total_info.get('detail_meaning','')}"
+            )
 
-        bad_list = []
-        for i in range(len(digits) - 1):
-            pair = f"{digits[i]}{digits[i+1]}"
-            info = pairs_map.get(pair)
-            if info and info.get("is_good") == "no":
-                bad_list.append(f"{pair} ({info['meaning']})")
-
-        # บันทึกข้อมูลเบอร์ล่าสุดของ user
-        sessions[user_id] = {
-            "last_number": ''.join(str(d) for d in digits),
-            "bad_pairs": bad_list
-        }
-        save_session(sessions)
-
-        reply = (
-            f"เบอร์: {''.join(str(d) for d in digits)}\n"
-            f"🧮 ผลรวม = {total_sum} → {total_info.get('meaning','')}\n"
-            f"{total_info.get('detail_meaning','')}"
-        )
-
+    # === ส่งข้อความกลับ ===
     line_bot_api.reply_message(
         ReplyMessageRequest(
             reply_token=event.reply_token,
