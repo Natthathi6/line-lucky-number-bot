@@ -1,0 +1,4 @@
+flask
+pandas
+line-bot-sdk
+python-dotenv
