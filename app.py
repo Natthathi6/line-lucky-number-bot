@@ -104,7 +104,7 @@ def handle_message(event):
             bad_pairs = check_bad_pairs(target_number)
 
             reply_text = (
-                f"เบอร์: {target_number}\n"
+                f"🔢 เบอร์: {target_number}\n"
                 f"🧮 ผลรวม = {total_sum} → {meaning}\n\n"
             )
 
@@ -119,7 +119,7 @@ def handle_message(event):
         total_sum = calculate_total(user_text)
         meaning = find_meaning(total_sum)
         reply_text = (
-            f"เบอร์: {user_text}\n"
+            f"🔢 เบอร์: {user_text}\n"
             f"🧮 ผลรวม = {total_sum} → {meaning}"
         )
 
